@@ -1,0 +1,51 @@
+# Página de estado publicada FUERA de Vercel (GitHub Pages), para que siga visible aunque se caiga la aplicación.
+# Mide la app, la base central y las bases de los laboratorios cada 10 minutos (status/build.mjs) y publica el
+# resultado. Para avisar algo a mano (ej. "estamos al tanto de una caída") escribí el texto en status/mensaje.txt.
+# Activación única: Settings → Pages → Source = "GitHub Actions" (y, si se quiere, dominio status.stockmanager.app).
+# Este repo es público a propósito (GitHub Pages es gratis solo así) y contiene únicamente esta página: el código de
+# la aplicación vive en otro repo privado. Usa el secret CRON_SECRET (el mismo valor que en Vercel); si no existe, la
+# página igual mide la aplicación y la base central, pero no las bases de cada laboratorio.
+name: Status page
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  push:
+    branches: [main]
+    paths: ["status/**", ".github/workflows/status-page.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: status-page
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+        id: pages
+      - name: Traer el estado anterior (para conservar los incidentes si la app no responde)
+        run: |
+          mkdir -p _site
+          curl -fsSL --max-time 20 "${{ steps.pages.outputs.base_url }}/status.json" -o _site/previous.json || true
+      - name: Medir y generar la página
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+        run: node status/build.mjs _site
+      - run: rm -f _site/previous.json
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4
